@@ -49,3 +49,12 @@ for result in results:
     tweet_text = f"New {type} planning application from {name} at {address}. "
     tweet_text += f"Registered on {formatted_date}.\n\n{link}"
     print(tweet_text, len(tweet_text), "\n\n")
+
+    tweet_data = {
+        'status': tweet_text,
+        'lat': location['latitude'],
+        'long': location['longitude'],
+        'display_coordinates': True
+    }
+
+    # api.update_status(tweet_data)
