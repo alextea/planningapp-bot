@@ -1,7 +1,9 @@
 import tweepy
-from datetime import datetime
+from datetime import datetime, timedelta
 import dateutil.parser
 import pickle
+import os
+from staticmap import StaticMap, IconMarker
 from sodapy import Socrata
 from credentials import *
 
@@ -35,6 +37,28 @@ def smart_truncate(content, length=100, suffix='…'):
     else:
         return ' '.join(content[:length+1].split(' ')[0:-1]) + suffix
 
+
+def create_map(coords):
+    image_width = 1200
+    image_height = 630
+
+    m = StaticMap(
+        width=image_width,
+        height=image_height,
+        url_template="http://tile.stamen.com/toner/{z}/{x}/{y}.png"
+    )
+
+    marker = IconMarker(
+        coords,
+        './location-marker.png',
+        18, 30)
+
+    m.add_marker(marker)
+
+    image = m.render()
+    image.save(result['pk']+'.png')
+    return result['pk']+'.png'
+
 # Unauthenticated client only works with public data sets. Note 'None'
 # in place of application token, and no username or password:
 client = Socrata("opendata.camden.gov.uk", app_token)
@@ -59,9 +83,10 @@ for result in results:
 
     date = dateutil.parser.parse(result['registered_date'])
 
-    if date < datetime(2020, 12, 24):
-        data['tweeted'].append(result['pk'])
-        continue
+    if not data['tweeted']:
+        if date < datetime.now() - timedelta(1):
+            data['tweeted'].append(result['pk'])
+            continue
 
     type = result['application_type']
     if 'applicant_name' in result and result['applicant_name'].strip() != '':
@@ -71,22 +96,31 @@ for result in results:
     address = smart_truncate(result['development_address'], 36)
     formatted_date = date.strftime("%d %B %Y")
     link = result['full_application']['url']
+    media_ids = []
     if 'location' in result:
         location = result['location']
+        coords = (float(location['longitude']), float(location['latitude']))
+        media_filename = create_map(coords)
+        # upload image
+        media = api.media_upload(filename=f"./{media_filename}")
+        media_ids.append(media.media_id_string)
 
     tweet_text = f"New {type} planning application from {name} at {address}. "
     tweet_text += f"Registered on {formatted_date}.\n\n{link}"
 
-    tweet_data = {
-        'status': tweet_text,
-        'lat': location['latitude'],
-        'long': location['longitude'],
-        'display_coordinates': True
-    }
-
     # send tweet
-    api.update_status(tweet_data)
+    api.update_status(
+        status=tweet_text,
+        lat=location['latitude'],
+        long=location['longitude'],
+        display_coordinates="true",
+        media_ids=media_ids
+    )
+
     data['tweeted'].append(result['pk'])
-    print(f"That's it, that's the tweet: \"{tweet_text}\"", len(tweet_text), "\n\n")
+    print(f"Tweeted: \"{tweet_text}\"", len(tweet_text), "\n\n")
+
+    if media_filename:
+        os.remove(f"./{media_filename}")
 
 pickle.dump(data, open(PICKLEFILE, "wb"))
