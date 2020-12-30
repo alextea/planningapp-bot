@@ -3,11 +3,10 @@ import os
 import pickle
 
 import dateutil.parser
+from decouple import config
 from staticmap import StaticMap, IconMarker
 from sodapy import Socrata
 import tweepy
-
-from credentials import *
 
 PICKLEFILE = "planningapp-bot.dat"
 
@@ -21,9 +20,9 @@ except IOError:
 if "tweeted" not in data:
     data["tweeted"] = []
 
-# Access and authorize our Twitter credentials from credentials.py
-auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
-auth.set_access_token(access_token, access_token_secret)
+# Access and authorize our Twitter credentials from environment variables
+auth = tweepy.OAuthHandler(config('CONSUMER_KEY'), config('CONSUMER_SECRET'))
+auth.set_access_token(config('ACCESS_TOKEN'), config('ACCESS_TOKEN_SECRET'))
 api = tweepy.API(auth)
 
 try:
@@ -40,7 +39,7 @@ def smart_truncate(content, length=100, suffix='…'):
         return ' '.join(content[:length+1].split(' ')[0:-1]) + suffix
 
 
-def create_map(coords):
+def create_map(coords, filename):
     image_width = 1200
     image_height = 630
 
@@ -58,71 +57,81 @@ def create_map(coords):
     m.add_marker(marker)
 
     image = m.render()
-    image.save(result['pk']+'.png')
-    return result['pk']+'.png'
+    image.save(filename+'.png')
+    return filename+'.png'
 
-# Unauthenticated client only works with public data sets. Note 'None'
-# in place of application token, and no username or password:
-client = Socrata("opendata.camden.gov.uk", app_token)
 
-# Example authenticated client (needed for non-public datasets):
-# client = Socrata(opendata.camden.gov.uk,
-#                  MyAppToken,
-#                  userame="user@example.com",
-#                  password="AFakePassword")
+def get_applications():
+    # Unauthenticated client only works with public data sets. Note 'None'
+    # in place of application token, and no username or password:
+    client = Socrata("opendata.camden.gov.uk", config('APP_TOKEN'))
 
-# First 2000 results, returned as JSON from API / converted to Python list of
-# dictionaries by sodapy.
-results = client.get(
-    "2eiu-s2cw",
-    limit=200,
-    order="registered_date DESC"
-)
+    # Example authenticated client (needed for non-public datasets):
+    # client = Socrata(opendata.camden.gov.uk,
+    #                  MyAppToken,
+    #                  userame="user@example.com",
+    #                  password="AFakePassword")
 
-for result in results:
-    if result['pk'] in data['tweeted']:
-        continue
-
-    date = dateutil.parser.parse(result['registered_date'])
-
-    if not data['tweeted']:
-        if date < datetime.now() - timedelta(1):
-            data['tweeted'].append(result['pk'])
-            continue
-
-    type = result['application_type']
-    if 'applicant_name' in result and result['applicant_name'].strip() != '':
-        name = result['applicant_name']
-    else:
-        name = "Unknown"
-    address = smart_truncate(result['development_address'], 36)
-    formatted_date = date.strftime("%d %B %Y")
-    link = result['full_application']['url']
-    media_ids = []
-    if 'location' in result:
-        location = result['location']
-        coords = (float(location['longitude']), float(location['latitude']))
-        media_filename = create_map(coords)
-        # upload image
-        media = api.media_upload(filename=f"./{media_filename}")
-        media_ids.append(media.media_id_string)
-
-    tweet_text = f"New {type} planning application from {name} at {address}. "
-    tweet_text += f"Registered on {formatted_date}.\n\n{link}"
-
-    # send tweet
-    api.update_status(
-        status=tweet_text,
-        lat=location['latitude'],
-        long=location['longitude'],
-        display_coordinates="true",
-        media_ids=media_ids
+    # First 2000 results, returned as JSON from API / converted to Python list of
+    # dictionaries by sodapy.
+    results = client.get(
+        "2eiu-s2cw",
+        limit=200,
+        order="registered_date DESC"
     )
 
-    data['tweeted'].append(result['pk'])
-    print(f"Tweeted: \"{tweet_text}\"", len(tweet_text), "\n\n")
+    return results
 
-    if media_filename:
-        os.remove(f"./{media_filename}")
 
-pickle.dump(data, open(PICKLEFILE, "wb"))
+def create_tweets():
+    results = get_applications()
+    for result in results:
+        if result['pk'] in data['tweeted']:
+            continue
+
+        date = dateutil.parser.parse(result['registered_date'])
+
+        if not data['tweeted']:
+            if date < datetime.now() - timedelta(1):
+                data['tweeted'].append(result['pk'])
+                continue
+
+        type = result['application_type']
+        if 'applicant_name' in result and result['applicant_name'].strip() != '':
+            name = result['applicant_name']
+        else:
+            name = "Unknown"
+        address = smart_truncate(result['development_address'], 36)
+        formatted_date = date.strftime("%d %B %Y")
+        link = result['full_application']['url']
+        media_ids = []
+        if 'location' in result:
+            location = result['location']
+            coords = (float(location['longitude']), float(location['latitude']))
+            media_filename = create_map(coords, result['pk'])
+            # upload image
+            media = api.media_upload(filename=f"./{media_filename}")
+            media_ids.append(media.media_id_string)
+
+        tweet_text = f"New {type} planning application from {name} at {address}. "
+        tweet_text += f"Registered on {formatted_date}.\n\n{link}"
+
+        # send tweet
+        api.update_status(
+            status=tweet_text,
+            lat=location['latitude'],
+            long=location['longitude'],
+            display_coordinates="true",
+            media_ids=media_ids
+        )
+
+        data['tweeted'].append(result['pk'])
+        print(f"Tweeted: \"{tweet_text}\"", len(tweet_text), "\n\n")
+
+        if media_filename:
+            os.remove(f"./{media_filename}")
+
+    pickle.dump(data, open(PICKLEFILE, "wb"))
+
+
+create_tweets()

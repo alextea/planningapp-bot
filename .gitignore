@@ -1,4 +1,3 @@
 __pycache__/
-package/
-credentials.py
+.env
 planningapp-bot.dat
