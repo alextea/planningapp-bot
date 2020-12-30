@@ -1,10 +1,12 @@
-import tweepy
 from datetime import datetime, timedelta
-import dateutil.parser
-import pickle
 import os
+import pickle
+
+import dateutil.parser
 from staticmap import StaticMap, IconMarker
 from sodapy import Socrata
+import tweepy
+
 from credentials import *
 
 PICKLEFILE = "planningapp-bot.dat"
