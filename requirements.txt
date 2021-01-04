@@ -1,5 +1,6 @@
 python-dateutil
 python-decouple
+psycopg2-binary
 staticmap
 sodapy
 tweepy

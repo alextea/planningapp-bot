@@ -1,24 +1,17 @@
-from datetime import datetime, timedelta
+from datetime import date, timedelta
 import os
 import pickle
 
 import dateutil.parser
 from decouple import config
+from psycopg2 import connect, sql
 from staticmap import StaticMap, IconMarker
 from sodapy import Socrata
 import tweepy
 
-PICKLEFILE = "planningapp-bot.dat"
-
-try:
-    data = pickle.load(open(PICKLEFILE, "rb"))
-except IOError:
-    data = {
-        "last-modified": ""
-    }
-
-if "tweeted" not in data:
-    data["tweeted"] = []
+# connect to database
+DATABASE_URL = config('DATABASE_URL')
+conn = connect(DATABASE_URL)
 
 # Access and authorize our Twitter credentials from environment variables
 auth = tweepy.OAuthHandler(config('CONSUMER_KEY'), config('CONSUMER_SECRET'))
@@ -37,6 +30,26 @@ def smart_truncate(content, length=100, suffix='…'):
         return content
     else:
         return ' '.join(content[:length+1].split(' ')[0:-1]) + suffix
+
+
+def is_application_tweeted(conn, pk):
+    cur = conn.cursor()
+    cur.execute("SELECT pk FROM tweeted WHERE pk = %s", (pk,))
+    return cur.fetchone() is not None
+
+
+def update_application(conn, pk):
+    cur = conn.cursor()
+    cur.execute("INSERT INTO tweeted VALUES (%s)", (pk,))
+
+
+def is_table_empty(conn, table):
+    cur = conn.cursor()
+    cur.execute(
+        sql.SQL("SELECT CASE WHEN EXISTS(SELECT 1 FROM {table}) THEN 0 ELSE 1 END")
+        .format(table=sql.Identifier(table))
+    )
+    return cur.fetchone()
 
 
 def create_map(coords, filename):
@@ -84,27 +97,35 @@ def get_applications():
 
 
 def create_tweets():
+    if is_table_empty(conn, "tweeted"):
+        # if nothing has been tweeted choose yesterday's date as the start date
+        yesterday = date.today() - timedelta(days=1)
+
     results = get_applications()
+
     for result in results:
-        if result['pk'] in data['tweeted']:
+        if is_application_tweeted(conn, result['pk']):
+            print(f"Skipping {result['pk']}: Already tweeted")
             continue
 
-        date = dateutil.parser.parse(result['registered_date'])
-
-        if not data['tweeted']:
-            if date < datetime.now() - timedelta(1):
-                data['tweeted'].append(result['pk'])
-                continue
+        registered_date = dateutil.parser.parse(result['registered_date']).date()
+        if (registered_date < yesterday and yesterday is not None):
+            # if application is older than yesterday, mark as tweeted and skip
+            update_application(conn, result['pk'])
+            print(f"Skipping {result['pk']}: Too old")
+            continue
 
         type = result['application_type']
         if 'applicant_name' in result and result['applicant_name'].strip() != '':
             name = result['applicant_name']
         else:
             name = "Unknown"
+
         address = smart_truncate(result['development_address'], 36)
-        formatted_date = date.strftime("%d %B %Y")
+        formatted_date = registered_date.strftime("%d %B %Y")
         link = result['full_application']['url']
         media_ids = []
+
         if 'location' in result:
             location = result['location']
             coords = (float(location['longitude']), float(location['latitude']))
@@ -125,13 +146,14 @@ def create_tweets():
             media_ids=media_ids
         )
 
-        data['tweeted'].append(result['pk'])
+        update_application(conn, result['pk'])
         print(f"Tweeted: \"{tweet_text}\"", len(tweet_text), "\n\n")
 
         if media_filename:
             os.remove(f"./{media_filename}")
 
-    pickle.dump(data, open(PICKLEFILE, "wb"))
+    conn.commit()
+    conn.close()
 
 
 create_tweets()
