@@ -116,12 +116,8 @@ def create_tweets():
             continue
 
         type = result['application_type']
-        if 'applicant_name' in result and result['applicant_name'].strip() != '':
-            name = result['applicant_name']
-        else:
-            name = "Unknown"
 
-        address = smart_truncate(result['development_address'], 36)
+        address = smart_truncate(result['development_address'], 46)
         formatted_date = registered_date.strftime("%d %B %Y")
         link = result['full_application']['url']
         media_ids = []
@@ -134,7 +130,7 @@ def create_tweets():
             media = api.media_upload(filename=f"./{media_filename}")
             media_ids.append(media.media_id_string)
 
-        tweet_text = f"New {type} planning application from {name} at {address}. "
+        tweet_text = f"New {type} planning application at {address}. "
         tweet_text += f"Registered on {formatted_date}.\n\n{link}"
 
         # send tweet
